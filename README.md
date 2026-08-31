@@ -22,8 +22,7 @@ When ChatGPT is signed out, the overlay temporarily expands and docks to the
 left of the Log in or Sign in button so it does not cover the account controls.
 The user's saved signed-in position and collapsed state are not overwritten.
 
-The footer includes an optional **Support me on Ko-Fi☕** link to
-`https://ko-fi.com/wifiog`.
+[Support me on Ko-Fi☕](https://ko-fi.com/wifiog)
 
 ## Privacy
 
@@ -49,16 +48,6 @@ Firefox will also show the required **Authentication information** declaration.
 This refers only to the temporary use of your existing ChatGPT session token as
 described above. The extension does not ask for, read, or store your password.
 
-## Temporary installation
-
-1. Extract the ZIP file.
-2. Open `about:debugging#/runtime/this-firefox` in Firefox.
-3. Select **Load Temporary Add-on**.
-4. Open the extracted folder and select `manifest.json`.
-5. Open or refresh `https://chatgpt.com/`.
-
-The temporary installation remains active until Firefox fully restarts.
-
 ## How message estimates work
 
 ChatGPT exposes percentage used rather than a fixed number of messages. Message
@@ -76,16 +65,3 @@ Until those minimums are reached, it displays **Learning estimate…**. As an ex
 conservative check, a weekly result lower than the ready five-hour estimate is
 also hidden as **Learning estimate…** rather than displaying a likely misleading
 number.
-
-## Permanent private installation
-
-Standard Firefox requires add-ons to be signed. Submit the ZIP through Mozilla's
-Add-on Developer Hub using **On your own** (unlisted/self-distributed), download
-the signed `.xpi`, then open `about:addons` and choose the gear menu → **Install
-Add-on From File**. It does not need to be publicly listed.
-
-## Maintenance note
-
-The usage endpoint is an internal ChatGPT web interface rather than a documented
-public API. A future ChatGPT change may require updating the endpoint or response
-field names in `usage-overlay.js`.
