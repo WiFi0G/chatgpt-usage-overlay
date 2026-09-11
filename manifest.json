@@ -1,8 +1,12 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Usage Overlay",
-  "version": "1.0.13",
-  "description": "Shows ChatGPT usage windows, reset times, and adaptive estimates of messages remaining.",
+  "version": "1.0.20",
+  "description": "Shows ChatGPT usage windows, reset times, and adaptive estimates of send attempts remaining.",
+  "icons": {
+    "48": "assets/icon-wave-48.png",
+    "96": "assets/icon-wave-96.png"
+  },
   "permissions": [
     "storage"
   ],
@@ -12,19 +16,19 @@
         "https://chatgpt.com/*"
       ],
       "js": [
+        "page-usage-fetcher.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
         "usage-overlay.js"
       ],
       "run_at": "document_idle"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "page-usage-fetcher.js"
-      ],
-      "matches": [
-        "https://chatgpt.com/*"
-      ]
     }
   ],
   "browser_specific_settings": {

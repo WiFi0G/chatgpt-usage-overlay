@@ -15,6 +15,7 @@
   const PROMPT_SELECTOR = '#prompt-textarea, textarea[data-testid="prompt-textarea"], [contenteditable="true"][data-testid="prompt-textarea"]';
   const DOCK_GAP = 10;
   const DOCK_EDGE_GAP = 12;
+  const DOCK_FALLBACK_RIGHT_GAP = 200;
   const HEADER_ANCHOR_MAX_BOTTOM = 72;
   const pendingRequests = new Map();
   let lastMessageSignalAt = 0;
@@ -27,7 +28,7 @@
     "display:block",
     "position:fixed",
     "top:72px",
-    "right:18px",
+    `right:${DOCK_FALLBACK_RIGHT_GAP}px`,
     "z-index:2147483647",
     "font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif"
   ].join(";");
@@ -47,7 +48,7 @@
         cursor:grab; user-select:none; touch-action:none;
       }
       .header:active { cursor:grabbing; }
-      .title { font-weight:700; letter-spacing:.01em; flex:1; }
+      .title { font-weight:700; letter-spacing:.01em; flex:1; white-space:nowrap; }
       .mini-title {
         display:none; align-items:center; justify-content:center; gap:4px;
         width:100%; min-width:0; padding:0 20px; white-space:nowrap;
@@ -68,11 +69,14 @@
       #dock svg { width:13px; height:13px; fill:none; stroke:currentColor; stroke-width:1.6; }
       .panel.docked #dock { display:none; }
       .body { padding:10px; display:grid; gap:11px; }
-      .panel.collapsed { width:200px; }
+      .panel.collapsed { width:220px; }
       .panel.collapsed .body, .panel.collapsed .footer, .panel.collapsed .error { display:none !important; }
       .panel.collapsed .title, .panel.collapsed .plan, .panel.collapsed #refresh { display:none; }
-      .panel.collapsed .mini-title { display:flex; flex:0 0 auto; width:auto; padding:0; }
-      .panel.collapsed .header { padding:5px 8px; gap:6px; justify-content:center; }
+      .panel.collapsed .mini-title {
+        display:flex; flex:1 1 auto; justify-content:flex-start;
+        width:auto; min-width:0; padding-left:2px; overflow:hidden;
+      }
+      .panel.collapsed .header { padding:6px 9px 6px 13px; gap:8px; justify-content:flex-start; }
       .panel.collapsed #dock { display:none; }
       .panel.collapsed #collapse { flex:0 0 20px; width:20px; padding:0; }
       .dock-target {
@@ -89,20 +93,23 @@
       .percent { color:#d1d5db; }
       .track { height:6px; background:#343438; border-radius:999px; overflow:hidden; margin:5px 0; }
       .fill { height:100%; width:0; border-radius:inherit; background:#10b981; transition:width .25s ease; }
-      .details { display:flex; justify-content:space-between; gap:8px; color:#aeb1b7; font-size:11px; }
+      .details {
+        display:flex; align-items:baseline; justify-content:space-between; gap:8px;
+        color:#aeb1b7; font-size:12px; white-space:nowrap;
+      }
       .estimate { color:#e5e7eb; font-weight:600; }
       .footer { padding:0 10px 9px; color:#858991; font-size:10px; display:flex; justify-content:space-between; }
       .support-link { color:#60a5fa; text-decoration:underline; text-underline-offset:2px; }
       .support-link:hover { color:#93c5fd; }
       .error { color:#fca5a5; padding:10px; display:none; }
     </style>
-    <section class="panel" aria-label="ChatGPT usage">
+    <section class="panel" aria-label="ChatGPT Usage Overlay">
       <div class="header">
-        <span class="title">ChatGPT usage</span>
+        <span class="title">ChatGPT Usage Overlay</span>
         <span class="mini-title">
-          <span class="mini-primary" id="mini-primary">…% used</span>
-          <span aria-hidden="true">-</span>
-          <span class="mini-reset" id="mini-reset">Resets in …</span>
+          <span class="mini-primary" id="mini-primary">Waiting for usage…</span>
+          <span id="mini-separator" aria-hidden="true" hidden>-</span>
+          <span class="mini-reset" id="mini-reset" hidden></span>
         </span>
         <span class="plan" id="plan"></span>
         <button id="refresh" title="Refresh usage" aria-label="Refresh usage">↻</button>
@@ -122,7 +129,7 @@
           <div class="details"><span class="reset"></span><span class="estimate"></span></div>
         </div>
         <div class="usage-row" id="secondary">
-          <div class="row-head"><span class="window-name">Weekly</span><span class="percent">Loading…</span></div>
+          <div class="row-head"><span class="window-name">7-day</span><span class="percent">Loading…</span></div>
           <div class="track"><div class="fill"></div></div>
           <div class="details"><span class="reset"></span><span class="estimate"></span></div>
         </div>
@@ -142,13 +149,17 @@
   const body = shadow.getElementById("body");
   const status = shadow.getElementById("status");
   const plan = shadow.getElementById("plan");
+  const miniTitle = shadow.querySelector(".mini-title");
   const miniPrimary = shadow.getElementById("mini-primary");
+  const miniSeparator = shadow.getElementById("mini-separator");
   const miniReset = shadow.getElementById("mini-reset");
   const dockTarget = shadow.getElementById("dock-target");
   const dockButton = shadow.getElementById("dock");
 
   const collapseButton = shadow.getElementById("collapse");
   let docked = true;
+  let dockAnchor = null;
+  let signedOut = false;
   panel.classList.add("docked");
 
   function setDocked(value) {
@@ -167,10 +178,8 @@
     for (const selector of selectors) {
       document.querySelectorAll(selector).forEach((candidate) => candidates.add(candidate));
     }
-    document.querySelectorAll("button").forEach((button) => {
-      if (button.textContent.trim() === "Share") candidates.add(button);
-    });
     return [...candidates]
+      .filter(element => !element.closest('[data-message-id], [data-testid^="conversation-turn-"], article'))
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
       .filter(({ rect }) => rect.width > 0 && rect.height > 0 &&
         rect.bottom > 0 && rect.right > 0 &&
@@ -191,10 +200,8 @@
     for (const selector of selectors) {
       document.querySelectorAll(selector).forEach((candidate) => candidates.add(candidate));
     }
-    document.querySelectorAll("button, a").forEach((element) => {
-      if (/^(?:log|sign) in$/i.test(element.textContent.trim())) candidates.add(element);
-    });
     return [...candidates]
+      .filter(element => !element.closest('[data-message-id], [data-testid^="conversation-turn-"], article'))
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
       .filter(({ rect }) => rect.width > 0 && rect.height > 0 &&
         rect.bottom > 0 && rect.right > 0 &&
@@ -203,35 +210,58 @@
       .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left)[0]?.element ?? null;
   }
 
-  function dockCoordinates() {
-    const anchorButton = findShareButton() ?? findLoginButton();
-    const width = panel.offsetWidth || 276;
-    const height = panel.offsetHeight || 36;
-    if (anchorButton) {
-      const anchorRect = anchorButton.getBoundingClientRect();
+  function findDockAnchor() {
+    if (dockAnchor?.isConnected) return dockAnchor;
+    dockAnchor = findShareButton() ?? findLoginButton();
+    return dockAnchor;
+  }
+
+  function dockCoordinates(requestedWidth, requestedHeight) {
+    const anchorButton = findDockAnchor();
+    const width = requestedWidth || panel.offsetWidth || 276;
+    const height = requestedHeight || panel.offsetHeight || 36;
+    const anchorRect = anchorButton?.getBoundingClientRect() ?? null;
+    if (signedOut) {
       return {
-        left: Math.max(DOCK_EDGE_GAP, anchorRect.left - DOCK_GAP - width),
-        top: Math.max(6, anchorRect.top + (anchorRect.height - height) / 2),
-        anchorRect
+        left: Math.max(DOCK_EDGE_GAP, window.innerWidth - DOCK_EDGE_GAP - width),
+        top: HEADER_ANCHOR_MAX_BOTTOM + DOCK_GAP,
+        anchorRect,
+        belowHeader: true
       };
     }
+    if (anchorRect) {
+      const leftOfAnchor = anchorRect.left - DOCK_GAP - width;
+      if (leftOfAnchor < DOCK_EDGE_GAP) {
+        const maxLeft = Math.max(DOCK_EDGE_GAP, window.innerWidth - DOCK_EDGE_GAP - width);
+        return {
+          left: Math.min(maxLeft, Math.max(DOCK_EDGE_GAP, anchorRect.left)),
+          top: Math.max(HEADER_ANCHOR_MAX_BOTTOM + DOCK_GAP, anchorRect.bottom + DOCK_GAP),
+          anchorRect,
+          belowHeader: true
+        };
+      }
+      return {
+        left: leftOfAnchor,
+        top: Math.max(6, anchorRect.top + (anchorRect.height - height) / 2),
+        anchorRect,
+        belowHeader: false
+      };
+    }
+    const fallbackLeft = window.innerWidth - DOCK_FALLBACK_RIGHT_GAP - width;
     return {
-      left: Math.max(DOCK_EDGE_GAP, window.innerWidth - DOCK_EDGE_GAP - width),
-      top: 8,
-      anchorRect: null
+      left: Math.max(DOCK_EDGE_GAP, window.innerWidth - DOCK_FALLBACK_RIGHT_GAP - width),
+      top: fallbackLeft < DOCK_EDGE_GAP ? HEADER_ANCHOR_MAX_BOTTOM + DOCK_GAP : 8,
+      anchorRect: null,
+      belowHeader: fallbackLeft < DOCK_EDGE_GAP
     };
   }
 
   function positionDockTarget() {
-    const target = dockCoordinates();
     const targetWidth = Math.max(120, Math.min(panel.offsetWidth || 232, 276));
+    const target = dockCoordinates(targetWidth, 34);
     dockTarget.style.width = `${targetWidth}px`;
-    dockTarget.style.left = `${target.anchorRect
-      ? Math.max(DOCK_EDGE_GAP, target.anchorRect.left - DOCK_GAP - targetWidth)
-      : Math.max(DOCK_EDGE_GAP, window.innerWidth - DOCK_EDGE_GAP - targetWidth)}px`;
-    dockTarget.style.top = `${target.anchorRect
-      ? Math.max(6, target.anchorRect.top + (target.anchorRect.height - 34) / 2)
-      : 8}px`;
+    dockTarget.style.left = `${target.left}px`;
+    dockTarget.style.top = `${target.top}px`;
   }
 
   function updateDockedPosition() {
@@ -388,22 +418,24 @@
   }
 
   document.addEventListener("submit", (event) => {
+    if (!event.isTrusted) return;
     const form = event.target;
     if (form instanceof Element && form.querySelector(PROMPT_SELECTOR)) recordLocalMessage();
   }, true);
 
   document.addEventListener("click", (event) => {
-    if (isSendButton(event.target)) recordLocalMessage();
+    if (!event.isTrusted) return;
+    if (isSendButton(event.target) && !event.target.closest("form")) recordLocalMessage();
   }, true);
 
   document.addEventListener("keydown", (event) => {
+    if (!event.isTrusted) return;
     if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
-    if (isPromptElement(event.target)) recordLocalMessage();
+    if (isPromptElement(event.target) && !event.target.closest("form")) recordLocalMessage();
   }, true);
 
   function number(value) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
   }
 
   function percent(value) {
@@ -417,17 +449,42 @@
     return parsed < 1e12 ? parsed * 1000 : parsed;
   }
 
+  function windowName(value) {
+    if (typeof value !== "string") return "";
+    const trimmed = value.trim();
+    return /^[a-z0-9][a-z0-9 /+_.-]{0,31}$/i.test(trimmed) ? trimmed : "";
+  }
+
+  function durationSeconds(value) {
+    const parsed = number(value);
+    return Number.isInteger(parsed) && parsed > 0 && parsed <= 31_536_000 ? parsed : null;
+  }
+
+  function durationLabel(seconds) {
+    if (seconds === 18_000) return "5-hour";
+    if (seconds === 604_800) return "7-day";
+    if (!seconds) return "Usage window";
+    if (seconds % 86_400 === 0) return `${seconds / 86_400}-day`;
+    if (seconds % 3_600 === 0) return `${seconds / 3_600}-hour`;
+    if (seconds % 60 === 0) return `${seconds / 60}-minute`;
+    return "Usage window";
+  }
+
   function readWindow(source) {
     if (!source) return null;
     const used = percent(source.used_percent ?? source.usedPercent ?? source.usage_percent);
     const resetAt = timestamp(source.reset_at ?? source.resetAt ?? source.resets_at);
-    return used === null ? null : { used, resetAt };
+    const duration = durationSeconds(source.limit_window_seconds ?? source.limitWindowSeconds);
+    const label = windowName(source.limit_name ?? source.limitName ?? source.window_name ?? source.windowName) ||
+      durationLabel(duration);
+    return used === null ? null : { used, resetAt, durationSeconds: duration, label };
   }
 
   function normalize(raw) {
+    if (!raw || typeof raw !== "object") throw new Error("Usage response was invalid");
     const limits = raw.rate_limit ?? raw.rateLimit ?? raw.usage ?? raw;
     return {
-      plan: raw.plan_type ?? raw.planType ?? raw.plan ?? "",
+      plan: typeof raw.plan_type === "string" && /^[a-z0-9_-]{0,24}$/i.test(raw.plan_type) ? raw.plan_type : "",
       primary: readWindow(limits.primary_window ?? limits.primaryWindow ?? limits.five_hour),
       secondary: readWindow(limits.secondary_window ?? limits.secondaryWindow ?? limits.weekly)
     };
@@ -435,13 +492,19 @@
 
   window.addEventListener(RESULT_EVENT, (event) => {
     try {
+      if (typeof event.detail !== "string" || event.detail.length > 4096) return;
       const result = JSON.parse(event.detail);
+      if (!result || typeof result.requestId !== "string" || typeof result.ok !== "boolean") return;
       const pending = pendingRequests.get(result.requestId);
       if (!pending) return;
       pendingRequests.delete(result.requestId);
       clearTimeout(pending.timer);
       if (result.ok) pending.resolve(result.data);
-      else pending.reject(new Error(result.error || "Usage request failed"));
+      else pending.reject(new Error(
+        typeof result.error === "string" && result.error.length <= 100
+          ? result.error
+          : "Usage is unavailable"
+      ));
     } catch {
       // Ignore malformed events from the page.
     }
@@ -523,7 +586,7 @@
     if (!estimate?.ready) return "Learning estimate…";
     const remaining = estimate.remaining;
     const formatted = remaining > 9999 ? "9,999+" : remaining.toLocaleString();
-    return `≈${formatted} messages left`;
+    return `≈${formatted} send attempts left`;
   }
 
   function resetText(resetAt) {
@@ -557,11 +620,23 @@
     return `Resets in ${relative}`;
   }
 
-  function renderCompact(current) {
+  function selectCompactWindow(primary, secondary, now = Date.now()) {
+    const isCurrent = (item) => item &&
+      (!item.resetAt || item.resetAt >= now - 60_000);
+    if (isCurrent(secondary) && secondary.used >= 100) return secondary;
+    if (isCurrent(primary)) return primary;
+    return null;
+  }
+
+  function renderCompact(current, unavailableText = "Usage unavailable") {
+    miniSeparator.hidden = !current;
+    miniReset.hidden = !current;
     if (!current) {
-      miniPrimary.textContent = "—% used";
-      miniReset.textContent = "Reset unavailable";
+      miniPrimary.textContent = unavailableText;
+      miniPrimary.style.removeProperty("color");
+      miniReset.textContent = "";
       miniReset.removeAttribute("title");
+      miniTitle.removeAttribute("aria-label");
       return;
     }
     const formatted = current.used.toFixed(current.used % 1 ? 1 : 0);
@@ -569,6 +644,7 @@
     miniPrimary.style.color = colorFor(current.used);
     miniReset.textContent = compactResetText(current.resetAt);
     miniReset.title = resetText(current.resetAt);
+    miniTitle.setAttribute("aria-label", `${current.label}, ${formatted}% used, ${miniReset.textContent}`);
   }
 
   function colorFor(used) {
@@ -584,19 +660,23 @@
       return;
     }
     row.style.display = "block";
+    row.querySelector(".window-name").textContent = current.label;
     row.querySelector(".percent").textContent = `${current.used.toFixed(current.used % 1 ? 1 : 0)}% used`;
     const fill = row.querySelector(".fill");
     fill.style.width = `${current.used}%`;
     fill.style.background = colorFor(current.used);
-    row.querySelector(".reset").textContent = resetText(current.resetAt);
+    const reset = row.querySelector(".reset");
+    reset.textContent = compactResetText(current.resetAt);
+    reset.title = resetText(current.resetAt);
+    reset.setAttribute("aria-label", reset.title);
     const estimate = row.querySelector(".estimate");
     estimate.textContent = estimateText(estimateResult);
     if (estimateResult?.ready) {
-      estimate.title = `Based on ${estimateResult.totalMessages} locally observed message${estimateResult.totalMessages === 1 ? "" : "s"} across ${estimateResult.changes} correlated usage change${estimateResult.changes === 1 ? "" : "s"}.`;
+      estimate.title = `Based on ${estimateResult.totalMessages} locally observed send attempt${estimateResult.totalMessages === 1 ? "" : "s"} across ${estimateResult.changes} correlated usage change${estimateResult.changes === 1 ? "" : "s"}.`;
     } else if (estimateResult?.consistencyCheckFailed) {
-      estimate.title = "The weekly estimate is hidden until it becomes consistent with the five-hour estimate.";
+      estimate.title = "The 7-day estimate is hidden until it becomes consistent with the five-hour estimate.";
     } else {
-      estimate.title = `Learning from locally sent messages (${estimateResult?.totalMessages ?? 0}/${estimateResult?.minimumMessages ?? 0} messages and ${estimateResult?.changes ?? 0}/${estimateResult?.minimumChanges ?? 0} usage changes observed).`;
+      estimate.title = `Learning from local send attempts (${estimateResult?.totalMessages ?? 0}/${estimateResult?.minimumMessages ?? 0} attempts and ${estimateResult?.changes ?? 0}/${estimateResult?.minimumChanges ?? 0} usage changes observed).`;
     }
   }
 
@@ -607,13 +687,13 @@
     status.textContent = "Refreshing…";
     try {
       const usage = await fetchUsage();
+      signedOut = false;
       const stored = await browser.storage.local.get([STORAGE_KEY, MESSAGE_COUNT_KEY]);
       const saved = stored[STORAGE_KEY] ?? {};
       const storedMessageCount = Number(stored[MESSAGE_COUNT_KEY]);
       const totalSent = Number.isFinite(storedMessageCount) && storedMessageCount >= 0
         ? Math.floor(storedMessageCount)
         : 0;
-
       updateSamples(saved, usage.primary, "primary", totalSent);
       updateSamples(saved, usage.secondary, "secondary", totalSent);
       await browser.storage.local.set({ [STORAGE_KEY]: saved });
@@ -635,44 +715,29 @@
 
       renderWindow("primary", usage.primary, primaryEstimate);
       renderWindow("secondary", usage.secondary, secondaryEstimate);
-      renderCompact(usage.primary);
+      renderCompact(selectCompactWindow(usage.primary, usage.secondary));
       plan.textContent = usage.plan;
       errorBox.style.display = "none";
       body.style.removeProperty("display");
       status.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      if (docked) requestAnimationFrame(updateDockedPosition);
     } catch (error) {
       const sessionUnavailable = error.message === "ChatGPT did not return an active session";
-      if (sessionUnavailable) {
-        applyCollapsed(false);
-        setDocked(true);
-        requestAnimationFrame(updateDockedPosition);
-      }
+      signedOut = sessionUnavailable;
+      renderCompact(null, sessionUnavailable ? "Sign in for usage" : "Usage unavailable");
+      plan.textContent = "";
       errorBox.textContent = `Unable to determine usage: ${error.message}. Make sure you are signed in to ChatGPT.`;
       errorBox.style.display = "block";
       body.style.display = "none";
       status.textContent = "Update failed";
+      if (docked) requestAnimationFrame(updateDockedPosition);
     } finally {
       refreshing = false;
     }
   }
 
-  function installPageBridge() {
-    return new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = browser.runtime.getURL("page-usage-fetcher.js");
-      script.addEventListener("load", () => {
-        script.remove();
-        resolve();
-      }, { once: true });
-      script.addEventListener("error", () => {
-        script.remove();
-        reject(new Error("The ChatGPT page blocked the local usage bridge"));
-      }, { once: true });
-      (document.head || document.documentElement).appendChild(script);
-    });
-  }
-
-  Promise.all([installPageBridge(), loadUiState()]).then(refresh).catch((error) => {
+  loadUiState().then(refresh).catch((error) => {
+    renderCompact(null);
     errorBox.textContent = `Unable to start: ${error.message}.`;
     errorBox.style.display = "block";
     body.style.display = "none";
@@ -702,5 +767,4 @@
     subtree: true
   });
   window.addEventListener("resize", () => requestAnimationFrame(maintainPosition));
-  window.addEventListener("scroll", scheduleDockUpdate, true);
 })();
