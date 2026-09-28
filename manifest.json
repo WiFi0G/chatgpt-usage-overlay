@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Usage Overlay",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "description": "Shows ChatGPT usage windows, reset times, and adaptive estimates of send attempts remaining.",
   "icons": {
     "48": "assets/icon-wave-48.png",

@@ -129,7 +129,7 @@
           <div class="details"><span class="reset"></span><span class="estimate"></span></div>
         </div>
         <div class="usage-row" id="secondary">
-          <div class="row-head"><span class="window-name">7-day</span><span class="percent">Loading…</span></div>
+          <div class="row-head"><span class="window-name">Weekly</span><span class="percent">Loading…</span></div>
           <div class="track"><div class="fill"></div></div>
           <div class="details"><span class="reset"></span><span class="estimate"></span></div>
         </div>
@@ -217,6 +217,87 @@
   }
 
   function dockCoordinates(requestedWidth, requestedHeight) {
+    const target = preferredDockCoordinates(requestedWidth, requestedHeight);
+    const width = requestedWidth || panel.offsetWidth || 276;
+    const height = requestedHeight || panel.offsetHeight || 36;
+    // Only control geometry is used: never read labels, values, or page text.
+    const controls = [...document.querySelectorAll('button, a[href], input, select, [role="button"], [role="tab"], [role="searchbox"]')]
+      .filter(element => !element.closest('[data-message-id], [data-testid^="conversation-turn-"], article'))
+      .filter(isHeaderControl)
+      .map(element => element.getBoundingClientRect())
+      .filter(rect => rect.width > 0 && rect.height > 0 && rect.top >= 0 &&
+        rect.top < HEADER_ANCHOR_MAX_BOTTOM && rect.right > 0 && rect.left < window.innerWidth);
+    // Locate Library's actual search/action row, independent of sticky styling.
+    if (/^\/library\/?$/.test(window.location?.pathname || "") && !target.anchorRect) {
+      const toolbar = findLibraryToolbar();
+      if (toolbar) return {
+        ...target,
+        left: Math.max(DOCK_EDGE_GAP, toolbar.left - DOCK_GAP - width),
+        top: Math.max(4, toolbar.top),
+        belowHeader: false
+      };
+    }
+    const overlaps = (left, top, rect) => left < rect.right + DOCK_GAP &&
+      left + width + DOCK_GAP > rect.left && top < rect.bottom + DOCK_GAP &&
+      top + height + DOCK_GAP > rect.top;
+    if (!controls.some(rect => overlaps(target.left, target.top, rect))) return target;
+
+    const candidates = controls.map(rect => rect.left - DOCK_GAP - width)
+      .filter(left => left >= DOCK_EDGE_GAP && left <= target.left)
+      .sort((a, b) => b - a);
+    const clearLeft = candidates.find(left =>
+      !controls.some(rect => overlaps(left, target.top, rect)));
+    if (clearLeft !== undefined) return { ...target, left: clearLeft };
+    return {
+      ...target,
+      top: Math.max(target.top, ...controls.map(rect => rect.bottom + DOCK_GAP)),
+      belowHeader: true
+    };
+  }
+
+  function findLibraryToolbar() {
+    const searches = document.querySelectorAll('input[type="search"], [role="searchbox"], input[placeholder*="library" i], input[aria-label*="library" i]');
+    for (const search of searches) {
+      const searchRect = search.getBoundingClientRect();
+      if (searchRect.width <= 0 || searchRect.height <= 0 || searchRect.top < 0 ||
+          searchRect.bottom > HEADER_ANCHOR_MAX_BOTTOM) continue;
+      for (let node = search.parentElement; node && node !== document.body; node = node.parentElement) {
+        const rect = node.getBoundingClientRect();
+        if (rect.height > HEADER_ANCHOR_MAX_BOTTOM || rect.top < 0) break;
+        const buttons = [...node.querySelectorAll('button, [role="button"]')]
+          .map(button => button.getBoundingClientRect())
+          .filter(button => button.width > 0 && button.height > 0 &&
+            button.top >= rect.top && button.bottom <= rect.bottom);
+        if (buttons.length >= 2) return {
+          left: Math.min(searchRect.left, ...buttons.map(button => button.left)),
+          top: Math.min(searchRect.top, ...buttons.map(button => button.top))
+        };
+      }
+    }
+    return null;
+  }
+
+  function isHeaderControl(element) {
+    // Sticky code/toolbars are still conversation content. Do not accept a
+    // positioned ancestor before checking the rest of its ancestry.
+    if (element.closest('pre, code, [data-message-author-role], [data-message-id], [data-testid^="conversation-turn-"], article')) return false;
+    let headerControl = false;
+    for (let node = element; node && node !== document.body; node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (style.visibility === "hidden" || style.display === "none") return false;
+      const main = node.matches('main, [role="main"]');
+      if (style.position === "fixed" || style.position === "sticky" ||
+          node.matches('header, [role="banner"], [role="toolbar"], [role="search"]')) headerControl = true;
+      // The main page may scroll around its own sticky header. Nested scroll
+      // containers, however, identify content such as code or library cards.
+      if (/(auto|scroll)/.test(`${style.overflowY} ${style.overflowX}`) &&
+          (node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth) && !main) return false;
+      if (main && !headerControl) return false;
+    }
+    return true;
+  }
+
+  function preferredDockCoordinates(requestedWidth, requestedHeight) {
     const anchorButton = findDockAnchor();
     const width = requestedWidth || panel.offsetWidth || 276;
     const height = requestedHeight || panel.offsetHeight || 36;
@@ -452,6 +533,7 @@
   function windowName(value) {
     if (typeof value !== "string") return "";
     const trimmed = value.trim();
+    if (/^7[ -]day$/i.test(trimmed)) return "Weekly";
     return /^[a-z0-9][a-z0-9 /+_.-]{0,31}$/i.test(trimmed) ? trimmed : "";
   }
 
@@ -462,7 +544,7 @@
 
   function durationLabel(seconds) {
     if (seconds === 18_000) return "5-hour";
-    if (seconds === 604_800) return "7-day";
+    if (seconds === 604_800) return "Weekly";
     if (!seconds) return "Usage window";
     if (seconds % 86_400 === 0) return `${seconds / 86_400}-day`;
     if (seconds % 3_600 === 0) return `${seconds / 3_600}-hour`;
@@ -674,7 +756,7 @@
     if (estimateResult?.ready) {
       estimate.title = `Based on ${estimateResult.totalMessages} locally observed send attempt${estimateResult.totalMessages === 1 ? "" : "s"} across ${estimateResult.changes} correlated usage change${estimateResult.changes === 1 ? "" : "s"}.`;
     } else if (estimateResult?.consistencyCheckFailed) {
-      estimate.title = "The 7-day estimate is hidden until it becomes consistent with the five-hour estimate.";
+      estimate.title = "The weekly estimate is hidden until it becomes consistent with the five-hour estimate.";
     } else {
       estimate.title = `Learning from local send attempts (${estimateResult?.totalMessages ?? 0}/${estimateResult?.minimumMessages ?? 0} attempts and ${estimateResult?.changes ?? 0}/${estimateResult?.minimumChanges ?? 0} usage changes observed).`;
     }
@@ -754,17 +836,23 @@
 
   let dockUpdateFrame = 0;
   function scheduleDockUpdate() {
-    if (!docked || dockUpdateFrame) return;
+    if ((!docked && !drag) || dockUpdateFrame) return;
     dockUpdateFrame = requestAnimationFrame(() => {
       dockUpdateFrame = 0;
       updateDockedPosition();
+      if (drag) positionDockTarget();
     });
   }
 
-  const pageObserver = new MutationObserver(scheduleDockUpdate);
+  const pageObserver = new MutationObserver(records => {
+    if (records.some(record => record.target !== host)) scheduleDockUpdate();
+  });
   pageObserver.observe(document.body || document.documentElement, {
     childList: true,
-    subtree: true
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class", "style", "hidden", "aria-hidden"]
   });
   window.addEventListener("resize", () => requestAnimationFrame(maintainPosition));
 })();
+
